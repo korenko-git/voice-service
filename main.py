@@ -141,15 +141,30 @@ async def list_voices():
 
 def transcribe(audio_bytes: bytes) -> str:
     audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-    segments, _ = models["whisper"].transcribe(
+    
+    if len(audio_np) < 16000 * 0.5:
+        return ""
+    
+    segments, info = models["whisper"].transcribe(
         audio_np,
         language="ru",
         beam_size=5,
         vad_filter=True,
         vad_parameters=dict(min_silence_duration_ms=500),
+        no_speech_threshold=0.6,
+        log_prob_threshold=-1.0,
     )
-    return " ".join(s.text for s in segments).strip()
-
+    
+    result_parts = []
+    for seg in segments:
+        # Пропускаем сегменты с низкой уверенностью
+        if seg.no_speech_prob > 0.6:
+            continue
+        if seg.avg_logprob < -1.0:
+            continue
+        result_parts.append(seg.text)
+    
+    return " ".join(result_parts).strip()
 
 def synthesize(text: str, ref_wav: str, ref_text: str) -> bytes:
     text = text[:250]
