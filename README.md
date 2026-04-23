@@ -1,6 +1,6 @@
 # Voice Chat Service
 
-A self-contained Docker service for real-time Russian voice chat using WebSockets. Implements a full pipeline: **Speech-to-Text → LLM → Stress Accentuation → Text-to-Speech**, optimized for low perceived latency via streaming synthesis.
+Self-contained Docker service for real-time voice chat via WebSockets. Full pipeline: Speech-to-Text → LLM → Stress Accentuation → Text-to-Speech, optimized for low perceived latency via streaming synthesis. F5-TTS with Russian language support, OpenAI-compatible LLM backend, multi-voice profiles, Redis sessions.
 
 ## Pipeline
 
@@ -18,7 +18,7 @@ Client (WebSocket)
 │         ↓ token by token                │
 │  3. silero-stress                       │  Accentuation
 │         ↓                               │
-│  4. F5-TTS (Russian model)              │  TTS
+│  4. F5-TTS                              │  TTS
 └─────────────────────────────────────────┘
     │
     │  JSON tokens  +  WAV chunks
@@ -82,7 +82,7 @@ huggingface-cli download Systran/faster-whisper-large-v3 \
   --local-dir-use-symlinks False
 ```
 
-### 4. Download F5-TTS Russian model
+### 4. Download F5-TTS model
 
 ```
 👉 https://huggingface.co/Misha24-10/F5-TTS_RUSSIAN/tree/main/F5TTS_v1_Base_accent_tune
@@ -263,4 +263,8 @@ Set `WHISPER_COMPUTE_TYPE=int8` in `.env` to reduce Whisper memory at minimal qu
 ## HuggingFace Models Used
 
 - [Systran/faster-whisper-large-v3](https://huggingface.co/Systran/faster-whisper-large-v3) — CTranslate2 Whisper Large v3
-- [Misha24-10/F5-TTS_RUSSIAN](https://huggingface.co/Misha24-10/F5-TTS_RUSSIAN/tree/main/F5TTS_v1_Base_accent_tune) — Russian F5-TTS model
+- [Misha24-10/F5-TTS_RUSSIAN](https://huggingface.co/Misha24-10/F5-TTS_RUSSIAN/tree/main/F5TTS_v1_Base_accent_tune) — F5-TTS with russian language support
+
+## License
+
+[MIT License](LICENSE.md)
