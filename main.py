@@ -24,7 +24,7 @@ REDIS_URL          = os.getenv("REDIS_URL",           "redis://redis:6379")
 SESSION_TTL        = int(os.getenv("SESSION_TTL",     "3600"))
 HISTORY_MAX_TURNS  = int(os.getenv("HISTORY_MAX_TURNS","20"))
 
-SENTENCE_END = re.compile(r'(?<=[.!?…,;])\s+')
+SENTENCE_END = re.compile(r'(?<=[.!?])\s+')
 MIN_SENTENCE_LEN = 5
 models: dict = {}
 
@@ -152,7 +152,7 @@ def transcribe(audio_bytes: bytes) -> str:
 
 
 def synthesize(text: str, ref_wav: str, ref_text: str) -> bytes:
-    text = text[:150]
+    text = text[:250]
     if len(text) < MIN_SENTENCE_LEN:
         return b""
     accented = models["accentor"](text)

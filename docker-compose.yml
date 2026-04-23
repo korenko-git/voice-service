@@ -15,6 +15,7 @@ services:
     volumes:
       - ./models:/app/models
       - ./system_prompt.txt:/app/system_prompt.txt
+      - ./main.py:/app/main.py
       - hf_cache:/root/.cache/huggingface
     depends_on:
       - redis
