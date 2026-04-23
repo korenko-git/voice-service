@@ -92,6 +92,16 @@ async def lifespan(app: FastAPI):
     models["redis"] = aioredis.from_url(REDIS_URL, decode_responses=True)
     await models["redis"].ping()
 
+    print("⏳ Warming up F5-TTS...")
+    ref_wav, ref_text = _voice_ref(DEFAULT_VOICE)
+    await asyncio.to_thread(
+        lambda: models["f5tts"].infer(
+            ref_file=ref_wav,
+            ref_text=ref_text,
+            gen_text="Привет.",
+        )
+    )
+
     print("✅ All systems ready")
     yield
 
