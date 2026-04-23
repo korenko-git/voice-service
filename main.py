@@ -150,9 +150,13 @@ def transcribe(audio_bytes: bytes) -> str:
         language="ru",
         beam_size=5,
         vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=500),
-        no_speech_threshold=0.6,
-        log_prob_threshold=-1.0,
+        vad_parameters=dict(
+            min_silence_duration_ms=300,
+            speech_pad_ms=400,
+            threshold=0.3
+        ),
+        no_speech_threshold=0.8,
+        log_prob_threshold=-1.5,
     )
     
     result_parts = []
