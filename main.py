@@ -1,4 +1,4 @@
-import asyncio, io, os, re, json, wave, time
+import asyncio, io, os, re, json, wave
 import numpy as np
 import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -9,38 +9,56 @@ from silero_stress import load_accentor
 from f5_tts.api import F5TTS
 import redis.asyncio as aioredis
 
+
 # ── Config ────────────────────────────────────────────────────────────────────
-LLM_URL           = os.getenv("LLM_URL",           "http://host.docker.internal:1234/v1")
-LLM_MODEL         = os.getenv("LLM_MODEL",          "local-model")
-WHISPER_PATH      = os.getenv("WHISPER_PATH",       "/app/models/whisper-large-v3-turbo.gguf")
-F5_MODEL_PATH     = os.getenv("F5_MODEL_PATH",      "/app/models/f5tts-russian/model_20000_inference.safetensors")
-F5_VOCAB_PATH     = os.getenv("F5_VOCAB_PATH",      "/app/models/f5tts-russian/vocab.txt")
-F5_REF_AUDIO      = os.getenv("F5_REF_AUDIO",       "/app/models/ref.wav")
-F5_REF_TEXT       = os.getenv("F5_REF_TEXT",        "Привет, это референсный голос.")
-SYSTEM_PROMPT_FILE= os.getenv("SYSTEM_PROMPT_FILE", "/app/system_prompt.txt")
-REDIS_URL         = os.getenv("REDIS_URL",          "redis://redis:6379")
-SESSION_TTL       = int(os.getenv("SESSION_TTL",    "3600"))   # секунды
-HISTORY_MAX_TURNS = int(os.getenv("HISTORY_MAX_TURNS", "20"))  # макс. пар user/assistant
+LLM_URL            = os.getenv("LLM_URL",            "http://host.docker.internal:1234/v1")
+LLM_MODEL          = os.getenv("LLM_MODEL",           "local-model")
+WHISPER_PATH       = os.getenv("WHISPER_PATH",        "/app/models/faster-whisper-turbo")
+WHISPER_COMPUTE    = os.getenv("WHISPER_COMPUTE_TYPE","float16")
+F5_MODEL_PATH      = os.getenv("F5_MODEL_PATH",       "/app/models/f5tts-russian/model_last_inference.safetensors")
+F5_VOCAB_PATH      = os.getenv("F5_VOCAB_PATH",       "/app/models/f5tts-russian/vocab.txt")
+VOICES_DIR         = os.getenv("VOICES_DIR",          "/app/models/voices")
+DEFAULT_VOICE      = os.getenv("DEFAULT_VOICE",       "default")
+SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE",  "/app/system_prompt.txt")
+REDIS_URL          = os.getenv("REDIS_URL",           "redis://redis:6379")
+SESSION_TTL        = int(os.getenv("SESSION_TTL",     "3600"))
+HISTORY_MAX_TURNS  = int(os.getenv("HISTORY_MAX_TURNS","20"))
 
 SENTENCE_END = re.compile(r'(?<=[.!?…,;])\s+')
+MIN_SENTENCE_LEN = 5
 models: dict = {}
+
+
+# ── Voice helpers ─────────────────────────────────────────────────────────────
+
+def _voice_ref(voice: str) -> tuple[str, str]:
+    """Return (ref_wav, ref_text) for a voice profile, falling back to default."""
+    d = os.path.join(VOICES_DIR, voice)
+    if not os.path.isdir(d):
+        d = os.path.join(VOICES_DIR, DEFAULT_VOICE)
+    wav  = os.path.join(d, "ref.wav")
+    txt  = os.path.join(d, "ref.txt")
+    ref_text = open(txt, encoding="utf-8").read().strip() if os.path.exists(txt) else ""
+    return wav, ref_text
+
 
 # ── Redis helpers ─────────────────────────────────────────────────────────────
 
-def _session_key(session_id: str) -> str:
-    return f"voice:session:{session_id}"
+def _session_key(sid: str) -> str:
+    return f"voice:session:{sid}"
 
-async def session_get(r: aioredis.Redis, session_id: str) -> dict:
-    raw = await r.get(_session_key(session_id))
+async def session_get(r: aioredis.Redis, sid: str) -> dict:
+    raw = await r.get(_session_key(sid))
     if raw:
         return json.loads(raw)
-    return {"history": [], "context": ""}
+    return {"history": [], "context": "", "voice": DEFAULT_VOICE}
 
-async def session_save(r: aioredis.Redis, session_id: str, data: dict):
-    await r.setex(_session_key(session_id), SESSION_TTL, json.dumps(data, ensure_ascii=False))
+async def session_save(r: aioredis.Redis, sid: str, data: dict):
+    await r.setex(_session_key(sid), SESSION_TTL, json.dumps(data, ensure_ascii=False))
 
-async def session_delete(r: aioredis.Redis, session_id: str):
-    await r.delete(_session_key(session_id))
+async def session_delete(r: aioredis.Redis, sid: str):
+    await r.delete(_session_key(sid))
+
 
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
@@ -50,7 +68,7 @@ async def lifespan(app: FastAPI):
     models["whisper"] = WhisperModel(
         WHISPER_PATH,
         device="cuda",
-        compute_type="float16",
+        compute_type=WHISPER_COMPUTE,
     )
 
     print("⏳ Loading silero-stress...")
@@ -65,7 +83,7 @@ async def lifespan(app: FastAPI):
     )
 
     if os.path.exists(SYSTEM_PROMPT_FILE):
-        with open(SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
+        with open(SYSTEM_PROMPT_FILE, encoding="utf-8") as f:
             models["system_prompt"] = f.read().strip()
     else:
         models["system_prompt"] = os.getenv("SYSTEM_PROMPT", "Ты голосовой ассистент.")
@@ -80,8 +98,34 @@ async def lifespan(app: FastAPI):
     await models["redis"].aclose()
     models.clear()
 
+
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+# ── REST endpoints ────────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health():
+    redis_ok = False
+    try:
+        await models["redis"].ping()
+        redis_ok = True
+    except Exception:
+        pass
+    return {"status": "ok", "models": list(models.keys()), "redis": redis_ok}
+
+
+@app.get("/voices")
+async def list_voices():
+    if not os.path.isdir(VOICES_DIR):
+        return {"voices": []}
+    voices = [
+        name for name in sorted(os.listdir(VOICES_DIR))
+        if os.path.isfile(os.path.join(VOICES_DIR, name, "ref.wav"))
+    ]
+    return {"voices": voices}
+
 
 # ── Audio / TTS helpers ───────────────────────────────────────────────────────
 
@@ -91,18 +135,20 @@ def transcribe(audio_bytes: bytes) -> str:
         audio_np,
         language="ru",
         beam_size=5,
-        vad_filter=True,       
+        vad_filter=True,
         vad_parameters=dict(min_silence_duration_ms=500),
     )
     return " ".join(s.text for s in segments).strip()
 
-def synthesize(text: str) -> bytes:
-    if len(text) > 150:
-        text = text[:150]
+
+def synthesize(text: str, ref_wav: str, ref_text: str) -> bytes:
+    text = text[:150]
+    if len(text) < MIN_SENTENCE_LEN:
+        return b""
     accented = models["accentor"](text)
     wav, sr, _ = models["f5tts"].infer(
-        ref_file=F5_REF_AUDIO,
-        ref_text=F5_REF_TEXT,
+        ref_file=ref_wav,
+        ref_text=ref_text,
         gen_text=accented,
     )
     buf = io.BytesIO()
@@ -112,6 +158,7 @@ def synthesize(text: str) -> bytes:
         wf.setframerate(sr)
         wf.writeframes((wav * 32767).astype(np.int16).tobytes())
     return buf.getvalue()
+
 
 async def stream_llm(messages: list):
     async with httpx.AsyncClient(timeout=60) as client:
@@ -132,6 +179,7 @@ async def stream_llm(messages: list):
                 except Exception:
                     pass
 
+
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
@@ -145,20 +193,20 @@ async def voice_chat(ws: WebSocket):
         while True:
             message = await ws.receive()
 
-            # ── JSON-фреймы ───────────────────────────────────────────
+            # ── JSON frames ───────────────────────────────────────────
             if "text" in message:
-                data = json.loads(message["text"])
+                data  = json.loads(message["text"])
                 mtype = data.get("type")
 
-                # Инициализация / реконнект
                 if mtype == "init":
                     session_id = data["session_id"]
                     session = await session_get(r, session_id)
                     await ws.send_json({
-                        "type": "init_ack",
-                        "session_id": session_id,
+                        "type":        "init_ack",
+                        "session_id":  session_id,
                         "has_history": len(session["history"]) > 0,
                         "has_context": bool(session["context"]),
+                        "voice":       session.get("voice", DEFAULT_VOICE),
                     })
                     continue
 
@@ -166,59 +214,64 @@ async def voice_chat(ws: WebSocket):
                     await ws.send_json({"type": "error", "text": "Send init first"})
                     continue
 
-                # Контекст персонажа
                 if mtype == "context":
                     session = await session_get(r, session_id)
                     session["context"] = data.get("text", "")
-                    session["history"] = []  # смена персонажа = новая история
+                    session["history"] = []
                     await session_save(r, session_id, session)
                     await ws.send_json({"type": "context_ack"})
                     continue
 
-                # Сброс истории
+                if mtype == "set_voice":
+                    voice = data.get("voice", DEFAULT_VOICE)
+                    voice_dir = os.path.join(VOICES_DIR, voice)
+                    if os.path.isfile(os.path.join(voice_dir, "ref.wav")):
+                        session = await session_get(r, session_id)
+                        session["voice"] = voice
+                        await session_save(r, session_id, session)
+                        await ws.send_json({"type": "voice_ack", "voice": voice})
+                    else:
+                        await ws.send_json({"type": "error", "text": f"Voice '{voice}' not found"})
+                    continue
+
                 if mtype == "reset":
                     await session_delete(r, session_id)
                     await ws.send_json({"type": "reset_ack"})
                     continue
 
-                # Получить текущую историю (для отображения в UI)
                 if mtype == "get_history":
                     session = await session_get(r, session_id)
                     await ws.send_json({"type": "history", "messages": session["history"]})
                     continue
 
-            # ── Бинарный фрейм (аудио PCM) ───────────────────────────
+            # ── Binary frame (PCM audio) ──────────────────────────────
             elif "bytes" in message:
                 if not session_id:
                     continue
 
-                session = await session_get(r, session_id)
+                session  = await session_get(r, session_id)
                 history: list = session["history"]
                 context: str  = session["context"]
+                voice:   str  = session.get("voice", DEFAULT_VOICE)
+                ref_wav, ref_text = _voice_ref(voice)
 
-                # Обрезаем историю до последних N пар
                 if len(history) > HISTORY_MAX_TURNS * 2:
                     history = history[-(HISTORY_MAX_TURNS * 2):]
 
-                system_content = base_prompt
-                if context:
-                    system_content += f"\n\n{context}"
-
+                system_content = base_prompt + (f"\n\n{context}" if context else "")
                 messages = [{"role": "system", "content": system_content}, *history]
 
-                # STT
                 user_text = transcribe(message["bytes"])
                 await ws.send_json({"type": "stt", "text": user_text})
                 if not user_text:
                     continue
 
                 messages.append({"role": "user", "content": user_text})
-                history.append({"role": "user", "content": user_text})
+                history.append( {"role": "user", "content": user_text})
 
                 sentence_buf = ""
                 full_reply   = ""
 
-                # LLM → TTS стриминг
                 async for token in stream_llm(messages):
                     sentence_buf += token
                     full_reply   += token
@@ -228,32 +281,22 @@ async def voice_chat(ws: WebSocket):
                     if len(parts) > 1:
                         for sentence in parts[:-1]:
                             s = sentence.strip()
-                            if s:
-                                wav = await asyncio.to_thread(synthesize, s)
-                                await ws.send_bytes(wav)
+                            if len(s) >= MIN_SENTENCE_LEN:
+                                wav = await asyncio.to_thread(synthesize, s, ref_wav, ref_text)
+                                if wav:
+                                    await ws.send_bytes(wav)
                         sentence_buf = parts[-1]
 
-                if sentence_buf.strip():
-                    wav = await asyncio.to_thread(synthesize, sentence_buf.strip())
-                    await ws.send_bytes(wav)
+                if sentence_buf.strip() and len(sentence_buf.strip()) >= MIN_SENTENCE_LEN:
+                    wav = await asyncio.to_thread(synthesize, sentence_buf.strip(), ref_wav, ref_text)
+                    if wav:
+                        await ws.send_bytes(wav)
 
                 await ws.send_json({"type": "done"})
 
-                # Сохраняем обновлённую историю в Redis
                 history.append({"role": "assistant", "content": full_reply})
                 session["history"] = history
                 await session_save(r, session_id, session)
 
     except WebSocketDisconnect:
-        pass  # история сохранена в Redis, сессия живёт SESSION_TTL секунд
-
-
-@app.get("/health")
-async def health():
-    redis_ok = False
-    try:
-        await models["redis"].ping()
-        redis_ok = True
-    except Exception:
         pass
-    return {"status": "ok", "models": list(models.keys()), "redis": redis_ok}
