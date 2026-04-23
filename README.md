@@ -77,7 +77,7 @@ Edit `.env` with your values — see the [Environment Variables](#environment-va
 
 ```bash
 pip install huggingface-hub
-huggingface-cli download deepdml/faster-whisper-large-v3-turbo-ct2 \
+huggingface-cli download Systran/faster-whisper-large-v3 \
   --local-dir ./models/faster-whisper-turbo \
   --local-dir-use-symlinks False
 ```
@@ -255,32 +255,12 @@ Set `WHISPER_COMPUTE_TYPE=int8` in `.env` to reduce Whisper memory at minimal qu
 
 ***
 
-## WSL2 Memory (Windows)
-
-By default WSL2 can consume all available RAM. Limit it in `C:\Users\<you>\.wslconfig`:
-
-```ini
-[wsl2]
-memory=20GB
-swap=4GB
-pageReporting=true
-```
-
-Then restart: `wsl --shutdown`
-
-***
-
-## Text Preprocessing
-
-The `silero-stress` library handles stress placement automatically (`за'мок` vs `замо'к`). F5-TTS was trained on a Cyrillic corpus — for brand names and proper nouns, pass them already transliterated in the system prompt (e.g. `Майкрософт` instead of `Microsoft`).
-
-F5-TTS has a hard limit of ~30 seconds per generation. The pipeline splits LLM output into sentences and synthesizes each one separately to avoid this limit. Sentences shorter than 5 characters are skipped to prevent silent output.
-
-***
-
 ## Related Projects
 
 - [SWivid/F5-TTS](https://github.com/SWivid/F5-TTS) — base F5-TTS implementation
-- [Misha24-10/F5-TTS_RUSSIAN](https://huggingface.co/Misha24-10/F5-TTS_RUSSIAN) — Russian model weights
 - [snakers4/silero-stress](https://github.com/snakers4/silero-stress) — stress accentuation
-- [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) — CTranslate2 Whisper
+
+## HuggingFace Models Used
+
+- [Systran/faster-whisper-large-v3](https://huggingface.co/Systran/faster-whisper-large-v3) — CTranslate2 Whisper Large v3
+- [Misha24-10/F5-TTS_RUSSIAN](https://huggingface.co/Misha24-10/F5-TTS_RUSSIAN/tree/main/F5TTS_v1_Base_accent_tune) — Russian F5-TTS model
