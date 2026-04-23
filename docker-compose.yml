@@ -1,0 +1,47 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  voice:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_URL=http://host.docker.internal:1234/v1
+      - LLM_MODEL=gemma-4-e4b-uncensored-hauhaucs-aggressive
+      - WHISPER_PATH=/app/models/faster-whisper-turbo
+      - F5_MODEL_PATH=/app/models/f5tts-russian/model_last_inference.safetensors
+      - F5_VOCAB_PATH=/app/models/f5tts-russian/vocab.txt
+      - F5_REF_AUDIO=/app/models/ref3.wav
+      - F5_REF_TEXT=Знаешь пять лет назад я и подумать не мог, что однажды я смогу то что
+      - SYSTEM_PROMPT_FILE=/app/system_prompt.txt
+      - REDIS_URL=redis://redis:6379
+      - SESSION_TTL=3600
+      - HISTORY_MAX_TURNS=20
+    volumes:
+      - ./models:/app/models
+      - ./system_prompt.txt:/app/system_prompt.txt
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis_data:
+  hf_cache:
