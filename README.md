@@ -52,15 +52,7 @@ voice-service/
 ├── docker-compose.yml
 ├── .env                      ← create from .env.example
 ├── .env.example
-└── models/
-    ├── faster-whisper-turbo/     ← CTranslate2 model (download below)
-    ├── f5tts-russian/
-    │   ├── model_last_inference.safetensors
-    │   └── vocab.txt
-    └── voices/                   ← voice profiles (see Voice Selection)
-        └── default/
-            ├── ref.wav           ← reference audio (5–12s, WAV 24kHz mono)
-            └── ref.txt           ← exact transcript of ref.wav
+└── models/                       ← models and voice profiles, see models/README.md
 ```
 
 ### 2. Create `.env`
@@ -69,75 +61,23 @@ voice-service/
 cp .env.example .env
 ```
 
-Edit `.env` with your values — see the [Environment Variables](#environment-variables) section.
+Edit `.env` with your values. Every variable is documented directly in [.env.example](.env.example).
 
-### 3. Download Whisper model
+### 3. Prepare models folder
 
-`faster-whisper` requires CTranslate2 format. Download with:
+All model downloads, file layout, and voice profile instructions were moved to [models/README.md](models/README.md).
 
-```bash
-pip install huggingface-hub
-huggingface-cli download Systran/faster-whisper-large-v3 \
-  --local-dir ./models/faster-whisper-turbo \
-  --local-dir-use-symlinks False
-```
+At minimum you need:
 
-### 4. Download F5-TTS model
+- `models/faster-whisper-turbo/` with the CTranslate2 Whisper model
+- `models/f5tts-russian/` with `model_last_inference.safetensors` and `vocab.txt`
+- `models/voices/default/` with `ref.wav` and `ref.txt`
 
-```
-👉 https://huggingface.co/Misha24-10/F5-TTS_RUSSIAN/tree/main/F5TTS_v1_Base_accent_tune
-```
-
-Download `model_last_inference.safetensors` and `vocab.txt`, place into `models/f5tts-russian/`.
-
-### 5. Prepare reference audio
-
-Place reference voice files in `models/voices/default/`:
-
-```bash
-# Convert from mp3, trim to 10 seconds
-ffmpeg -i input.mp3 -t 10 -ar 24000 -ac 1 -sample_fmt s16 models/voices/default/ref.wav
-
-# Write the exact transcript
-echo "Текст того, что говорится в записи." > models/voices/default/ref.txt
-```
-
-### 6. Build and run
+### 4. Build and run
 
 ```bash
 docker compose up --build
 ```
-
-***
-
-## Environment Variables
-
-All configuration lives in `.env`. The `.env.example` file documents every variable:
-
-```ini
-# LLM — any OpenAI-compatible endpoint
-LLM_URL=http://host.docker.internal:1234/v1
-LLM_MODEL=local-model
-
-# Whisper
-WHISPER_PATH=/app/models/faster-whisper-turbo
-WHISPER_COMPUTE_TYPE=float16        # float16 | int8 (int8 saves ~700MB VRAM)
-
-# F5-TTS
-F5_MODEL_PATH=/app/models/f5tts-russian/model_last_inference.safetensors
-F5_VOCAB_PATH=/app/models/f5tts-russian/vocab.txt
-VOICES_DIR=/app/models/voices
-DEFAULT_VOICE=default
-
-# LLM behaviour
-SYSTEM_PROMPT_FILE=/app/system_prompt.txt
-
-# Session / Redis
-SESSION_TTL=3600
-HISTORY_MAX_TURNS=20
-```
-
-> **LLM endpoint note:** if running LM Studio or Ollama locally on Windows/macOS, use `host.docker.internal` as the hostname. For remote or cloud endpoints use the full URL. The service speaks plain OpenAI chat completions API — any compatible backend works.
 
 ***
 
@@ -199,20 +139,7 @@ The server responds with interleaved frames:
 
 ## Voice Selection
 
-The service supports multiple voice profiles. Each profile is a folder inside `models/voices/` containing a reference WAV and its transcript:
-
-```
-models/voices/
-├── default/
-│   ├── ref.wav
-│   └── ref.txt
-├── alice/
-│   ├── ref.wav
-│   └── ref.txt
-└── narrator/
-    ├── ref.wav
-    └── ref.txt
-```
+The service supports multiple voice profiles stored in `models/voices/`. Full folder layout and preparation tips are documented in [models/README.md](models/README.md).
 
 ### REST endpoint
 

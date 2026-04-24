@@ -1,2 +1,3 @@
-/models/
 .env
+/models/*
+!/models/README.md
